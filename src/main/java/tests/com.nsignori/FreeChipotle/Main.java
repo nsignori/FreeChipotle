@@ -3,41 +3,61 @@ package tests.com.nsignori.FreeChipotle;
 import twitter4j.*;
 import twitter4j.conf.ConfigurationBuilder;
 
+import javax.mail.*;
+import javax.mail.internet.InternetAddress;
+import javax.mail.internet.MimeMessage;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
+import java.util.Scanner;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Main {
-    static final String CONSUMER_KEY = System.getenv("CONSUMER_KEY");
-    static final String CONSUMER_SECRET = System.getenv("CONSUMER_SECRET");
-    static final String ACCESS_TOKEN = System.getenv("ACCESS_TOKEN");
-    static final String ACCESS_TOKEN_SECRET = System.getenv("ACCESS_TOKEN_SECRET");
+    private static final String CONSUMER_KEY = System.getenv("CONSUMER_KEY");
+    private static final String CONSUMER_SECRET = System.getenv("CONSUMER_SECRET");
+    private static final String ACCESS_TOKEN = System.getenv("ACCESS_TOKEN");
+    private static final String ACCESS_TOKEN_SECRET = System.getenv("ACCESS_TOKEN_SECRET");
+    private static ArrayList<String> emails = new ArrayList<String>();
+
 
     public static void main(String[] args) {
-        Twitter twitter = getTwitterInstance();
+        Scanner scan;
         try {
-            boolean found = false;
-            for(int i = 1; i < 10 && !found; i++) {
-                List<Status> statuses = twitter.getUserTimeline("ChipotleTweets", new Paging(i, 80));
-
-                for (Status status : statuses) {
-                    String fmt = status.getText();
-                    Pattern pattern = Pattern.compile("\\b\\w*(FREE)\\w*\\b");
-                    Matcher matcher = pattern.matcher(fmt);
-                    if (matcher.find()) {
-                        System.out.println(matcher.group(0));
-                        found = true;
-                        break;
-                    }
-//                System.out.println(fmt);
-                }
-            }
-        } catch (TwitterException e) {
+            scan = new Scanner(new File("src/main/resources/emails.txt"));
+        } catch (FileNotFoundException e) {
             e.printStackTrace();
+            return;
+        }
+        while (scan.hasNextLine()) {
+            String email = scan.nextLine();
+            if(!email.contains("//")) {
+                emails.add(email);
+                System.out.println(email);
+            }
+        }
+
+
+        Twitter twitter = getTwitterInstance();
+
+        String previousCode = "";
+        while(true) {
+            String code = getLatestFreeCode(twitter);
+            if(!code.equals(previousCode)) {
+                sendEmail(emails, code);
+                previousCode = code;
+            }
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
         }
     }
 
-    public static Twitter getTwitterInstance() {
+    private static Twitter getTwitterInstance() {
         ConfigurationBuilder cb = new ConfigurationBuilder();
         cb.setDebugEnabled(true)
                 .setOAuthConsumerKey(CONSUMER_KEY)
@@ -49,22 +69,63 @@ public class Main {
         return tf.getInstance();
     }
 
-    private static void showHomeTimeline(Twitter twitter) {
-
-        List<Status> statuses = null;
+    private static String getLatestFreeCode(Twitter twitter) {
         try {
-            statuses = twitter.getHomeTimeline();
+            for(int i = 1; i < 20; i++) {
+                List<Status> statuses = twitter.getUserTimeline("ChipotleTweets", new Paging(i, 20));
 
-            System.out.println("Showing home timeline.");
-
-            for (Status status : statuses) {
-                System.out.println(status.getUser().getName() + ":" + status.getText());
-                String url= "https://twitter.com/" + status.getUser().getScreenName() + "/status/"
-                        + status.getId();
-                System.out.println("Above tweet URL : " + url);
+                for (Status status : statuses) {
+                    String fmt = status.getText();
+                    Pattern pattern = Pattern.compile("\\b\\w*(FREE)\\w*\\b");
+                    Matcher matcher = pattern.matcher(fmt);
+                    if (matcher.find()) {
+                        System.out.println("Page: " + i + " Code: " + matcher.group(0));
+                        return matcher.group(0);
+                    }
+                }
             }
         } catch (TwitterException e) {
             e.printStackTrace();
+        }
+
+        return "";
+    }
+
+    private static void sendEmail(ArrayList<String> emails, String code) {
+        for(String email : emails) {
+            //Get the session object
+            Properties props = new Properties();
+            props.setProperty("mail.transport.protocol", "smtp");
+            props.setProperty("mail.host", System.getenv("EMAIL_HOST"));
+            props.put("mail.smtp.auth", "true");
+            props.put("mail.smtp.port", "465");
+            props.put("mail.debug", "true");
+            props.put("mail.smtp.socketFactory.port", "465");
+            props.put("mail.smtp.socketFactory.class","javax.net.ssl.SSLSocketFactory");
+            props.put("mail.smtp.socketFactory.fallback", "false");
+
+            Session session = Session.getDefaultInstance(props,
+                    new javax.mail.Authenticator() {
+                        protected PasswordAuthentication getPasswordAuthentication() {
+                            return new PasswordAuthentication(System.getenv("FROM_EMAIL"), System.getenv("FROM_EMAIL_PASSWORD"));
+                        }
+                    });
+
+            //Compose the message
+            try {
+                MimeMessage message = new MimeMessage(session);
+                message.setFrom(new InternetAddress(System.getenv("FROM_EMAIL")));
+                message.addRecipient(Message.RecipientType.TO,new InternetAddress(email));
+                message.setText(code);
+
+                //send the message
+                Transport.send(message);
+
+                System.out.println("message sent successfully to: " + email);
+
+            } catch (MessagingException e) {
+                e.printStackTrace();
+            }
         }
     }
 }
